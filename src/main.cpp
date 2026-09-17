@@ -204,24 +204,11 @@ std::optional<long long> ParseIso8601ToEpochMillis(const std::string& s) {
     return utcSeconds * 1000LL + millis;
 }
 
-} // namespace
-
-int main(int argc, char** argv) {
-    std::string folderUrl = kDefaultFolderUrl;
-    std::string outputDir = ".";
-    if (argc > 1) {
-        folderUrl = argv[1];
-    }
-    if (argc > 2) {
-        outputDir = argv[2];
-    }
-
-    CurlGlobalGuard curlGuard;
-
+std::optional<Candidate> QueryLatestJlpArchive(const std::string& folderUrl) {
     auto apiUrlOpt = ToStorageApiUrl(folderUrl);
     if (!apiUrlOpt) {
         std::cerr << "Could not derive Artifactory API URL from: " << folderUrl << "\n";
-        return 1;
+        return std::nullopt;
     }
     const std::string apiUrl = *apiUrlOpt;
 
@@ -229,7 +216,7 @@ int main(int argc, char** argv) {
     auto [listCode, listBody] = HttpGet(apiUrl);
     if (listCode != 200) {
         std::cerr << "Failed to list folder contents (HTTP " << listCode << ")\n";
-        return 1;
+        return std::nullopt;
     }
 
     json listJson;
@@ -237,13 +224,12 @@ int main(int argc, char** argv) {
         listJson = json::parse(listBody);
     } catch (const std::exception& e) {
         std::cerr << "Failed to parse folder listing JSON: " << e.what() << "\n";
-        return 1;
+        return std::nullopt;
     }
 
     std::vector<std::string> candidateNames;
     for (const auto& child : listJson.value("children", json::array())) {
-        bool isFolder = child.value("folder", false);
-        if (isFolder) {
+        if (child.value("folder", false)) {
             continue;
         }
         std::string uri = child.value("uri", "");
@@ -257,15 +243,14 @@ int main(int argc, char** argv) {
 
     if (candidateNames.empty()) {
         std::cerr << "No files matching pattern '" << kFileNamePattern << "' were found\n";
-        return 1;
+        return std::nullopt;
     }
 
     std::cout << "Found " << candidateNames.size() << " candidate(s), checking timestamps...\n";
 
     std::optional<Candidate> best;
     for (const auto& name : candidateNames) {
-        std::string fileApiUrl = JoinUrl(apiUrl, name);
-        auto [code, body] = HttpGet(fileApiUrl);
+        auto [code, body] = HttpGet(JoinUrl(apiUrl, name));
         if (code != 200) {
             std::cerr << "  Skipping " << name << ": failed to fetch metadata (HTTP " << code << ")\n";
             continue;
@@ -287,6 +272,25 @@ int main(int argc, char** argv) {
             std::cerr << "  Skipping " << name << ": failed to parse metadata JSON: " << e.what() << "\n";
         }
     }
+
+    return best;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    std::string folderUrl = kDefaultFolderUrl;
+    std::string outputDir = ".";
+    if (argc > 1) {
+        folderUrl = argv[1];
+    }
+    if (argc > 2) {
+        outputDir = argv[2];
+    }
+
+    CurlGlobalGuard curlGuard;
+
+    std::optional<Candidate> best = QueryLatestJlpArchive(folderUrl);
 
     if (!best) {
         std::cerr << "Could not determine the latest matching file\n";
