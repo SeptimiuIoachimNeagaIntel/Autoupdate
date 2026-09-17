@@ -1,15 +1,15 @@
 # JLP Tool Downloader
 
-Finds and downloads the newest `JLP*.zip` archive from the Artifactory
+Finds and downloads the highest-versioned `JLP_<version>.zip` archive from the Artifactory
 folder:
 
 ```
 https://af01p-ir.devtools.intel.com/artifactory/mvt-releases-local/JLPTool
 ```
 
-It lists the folder via the Artifactory REST storage API, reads each
-matching file's `lastModified` timestamp, picks the newest one, and
-downloads it with libcurl.
+It lists the folder with one Artifactory REST storage API request, compares
+the numeric version components in each matching filename, and downloads the
+archive with the highest version using libcurl.
 
 ## Dependencies vendored in this repo (no network access needed to build)
 

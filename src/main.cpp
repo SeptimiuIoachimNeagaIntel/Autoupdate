@@ -1,13 +1,10 @@
-// Downloads the newest file matching "JLP*.zip" from an Artifactory
-// repository folder using libcurl, with the file listing/metadata parsed
-// via the Artifactory REST "storage" API.
+// Downloads the highest-versioned JLP_<version>.zip file from an Artifactory
+// repository folder using libcurl and the REST "storage" API.
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
-#include <algorithm>
-#include <cstdio>
-#include <cstdlib>
+#include <cctype>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -20,7 +17,8 @@ namespace {
 
 constexpr const char* kDefaultFolderUrl =
     "https://af01p-ir.devtools.intel.com/artifactory/mvt-releases-local/JLPTool";
-constexpr const char* kFileNamePattern = "JLP*.zip";
+constexpr const char* kArchivePrefix = "JLP_";
+constexpr const char* kArchiveSuffix = ".zip";
 
 // RAII wrapper around curl_global_init/curl_global_cleanup.
 class CurlGlobalGuard {
@@ -109,29 +107,6 @@ bool DownloadFile(const std::string& url, const std::string& destinationPath) {
     return true;
 }
 
-// Minimal glob matcher supporting '*' and '?', case-sensitive.
-bool MatchesWildcard(const std::string& name, const std::string& pattern) {
-    size_t n = 0, p = 0, star = std::string::npos, matchPos = 0;
-    while (n < name.size()) {
-        if (p < pattern.size() && (pattern[p] == '?' || pattern[p] == name[n])) {
-            ++n;
-            ++p;
-        } else if (p < pattern.size() && pattern[p] == '*') {
-            star = p++;
-            matchPos = n;
-        } else if (star != std::string::npos) {
-            p = star + 1;
-            n = ++matchPos;
-        } else {
-            return false;
-        }
-    }
-    while (p < pattern.size() && pattern[p] == '*') {
-        ++p;
-    }
-    return p == pattern.size();
-}
-
 // Rewrites a repository folder URL such as
 // "https://host/artifactory/repo/path" into the corresponding Artifactory
 // REST storage API URL "https://host/artifactory/api/storage/repo/path".
@@ -155,53 +130,56 @@ std::string JoinUrl(const std::string& base, const std::string& child) {
 
 struct Candidate {
     std::string name;
-    std::string lastModified;
-    long long epochMillis = 0;
+    std::string versionText;
+    std::vector<std::string> versionParts;
 };
 
-// Days since 1970-01-01 for a given civil (proleptic Gregorian) date.
-// Algorithm by Howard Hinnant (public domain); avoids depending on the
-// current timezone the way mktime()/localtime() would.
-long long DaysFromCivil(long long y, unsigned m, unsigned d) {
-    y -= m <= 2;
-    const long long era = (y >= 0 ? y : y - 399) / 400;
-    const unsigned yoe = static_cast<unsigned>(y - era * 400);
-    const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
-    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    return era * 146097 + static_cast<long long>(doe) - 719468;
-}
-
-// Parses an Artifactory-style ISO8601 timestamp (e.g.
-// "2026-09-10T18:03:03.635+01:00" or "...Z") into milliseconds since the
-// Unix epoch (UTC), so timestamps using different timezone offsets can be
-// compared correctly. Returns std::nullopt on failure.
-std::optional<long long> ParseIso8601ToEpochMillis(const std::string& s) {
-    int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0, millis = 0;
-    int consumed = 0;
-    int matched = std::sscanf(s.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d.%3d%n", &year, &month, &day,
-                               &hour, &minute, &second, &millis, &consumed);
-    if (matched != 7) {
+std::optional<std::vector<std::string>> ParseArchiveVersion(const std::string& name) {
+    const std::string prefix = kArchivePrefix;
+    const std::string suffix = kArchiveSuffix;
+    if (name.size() <= prefix.size() + suffix.size() || name.compare(0, prefix.size(), prefix) != 0 ||
+        name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) {
         return std::nullopt;
     }
 
-    char offsetSign = 'Z';
-    int offsetHour = 0, offsetMinute = 0;
-    std::string rest = s.substr(consumed);
-    if (!rest.empty() && (rest[0] == '+' || rest[0] == '-')) {
-        offsetSign = rest[0];
-        if (std::sscanf(rest.c_str() + 1, "%2d:%2d", &offsetHour, &offsetMinute) != 2) {
+    const std::string version = name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (start <= version.size()) {
+        const size_t end = version.find('.', start);
+        std::string part = version.substr(start, end == std::string::npos ? end : end - start);
+        if (part.empty()) {
             return std::nullopt;
         }
-    }
+        for (char character : part) {
+            if (!std::isdigit(static_cast<unsigned char>(character))) {
+                return std::nullopt;
+            }
+        }
 
-    long long days = DaysFromCivil(year, static_cast<unsigned>(month), static_cast<unsigned>(day));
-    long long utcSeconds = days * 86400LL + hour * 3600LL + minute * 60LL + second;
-    if (offsetSign == '+') {
-        utcSeconds -= (offsetHour * 3600LL + offsetMinute * 60LL);
-    } else if (offsetSign == '-') {
-        utcSeconds += (offsetHour * 3600LL + offsetMinute * 60LL);
+        const size_t firstNonZero = part.find_first_not_of('0');
+        parts.push_back(firstNonZero == std::string::npos ? "0" : part.substr(firstNonZero));
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
     }
-    return utcSeconds * 1000LL + millis;
+    return parts;
+}
+
+bool IsHigherVersion(const std::vector<std::string>& candidate, const std::vector<std::string>& current) {
+    const size_t partCount = candidate.size() > current.size() ? candidate.size() : current.size();
+    for (size_t index = 0; index < partCount; ++index) {
+        const std::string candidatePart = index < candidate.size() ? candidate[index] : "0";
+        const std::string currentPart = index < current.size() ? current[index] : "0";
+        if (candidatePart.size() != currentPart.size()) {
+            return candidatePart.size() > currentPart.size();
+        }
+        if (candidatePart != currentPart) {
+            return candidatePart > currentPart;
+        }
+    }
+    return false;
 }
 
 std::optional<Candidate> QueryLatestJlpArchive(const std::string& folderUrl) {
@@ -227,7 +205,7 @@ std::optional<Candidate> QueryLatestJlpArchive(const std::string& folderUrl) {
         return std::nullopt;
     }
 
-    std::vector<std::string> candidateNames;
+    std::optional<Candidate> best;
     for (const auto& child : listJson.value("children", json::array())) {
         if (child.value("folder", false)) {
             continue;
@@ -236,41 +214,21 @@ std::optional<Candidate> QueryLatestJlpArchive(const std::string& folderUrl) {
         if (!uri.empty() && uri.front() == '/') {
             uri.erase(0, 1);
         }
-        if (MatchesWildcard(uri, kFileNamePattern)) {
-            candidateNames.push_back(uri);
-        }
-    }
-
-    if (candidateNames.empty()) {
-        std::cerr << "No files matching pattern '" << kFileNamePattern << "' were found\n";
-        return std::nullopt;
-    }
-
-    std::cout << "Found " << candidateNames.size() << " candidate(s), checking timestamps...\n";
-
-    std::optional<Candidate> best;
-    for (const auto& name : candidateNames) {
-        auto [code, body] = HttpGet(JoinUrl(apiUrl, name));
-        if (code != 200) {
-            std::cerr << "  Skipping " << name << ": failed to fetch metadata (HTTP " << code << ")\n";
+        auto versionParts = ParseArchiveVersion(uri);
+        if (!versionParts) {
             continue;
         }
-
-        try {
-            json fileJson = json::parse(body);
-            std::string lastModified = fileJson.value("lastModified", "");
-            auto epochMillis = ParseIso8601ToEpochMillis(lastModified);
-            std::cout << "  " << name << " lastModified=" << lastModified << "\n";
-            if (!epochMillis) {
-                std::cerr << "    Skipping: could not parse timestamp\n";
-                continue;
-            }
-            if (!best || *epochMillis > best->epochMillis) {
-                best = Candidate{name, lastModified, *epochMillis};
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "  Skipping " << name << ": failed to parse metadata JSON: " << e.what() << "\n";
+        if (!best || IsHigherVersion(*versionParts, best->versionParts)) {
+            const size_t versionLength = uri.size() - std::string(kArchivePrefix).size() -
+                                         std::string(kArchiveSuffix).size();
+            best = Candidate{uri, uri.substr(std::string(kArchivePrefix).size(), versionLength),
+                             std::move(*versionParts)};
         }
+    }
+
+    if (!best) {
+        std::cerr << "No archives matching JLP_<version>.zip were found\n";
+        return std::nullopt;
     }
 
     return best;
@@ -297,7 +255,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::cout << "Latest matching file: " << best->name << " (lastModified=" << best->lastModified << ")\n";
+    std::cout << "Latest matching file: " << best->name << " (version=" << best->versionText << ")\n";
 
     const std::string downloadUrl = JoinUrl(folderUrl, best->name);
     const std::string destinationPath = JoinUrl(outputDir, best->name);
