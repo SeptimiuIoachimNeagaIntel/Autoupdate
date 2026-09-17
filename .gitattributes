@@ -1,0 +1,6 @@
+# Keep vendored third-party source byte-exact on every platform. Without this,
+# a clone with core.autocrlf=true rewrites line endings across these trees,
+# which breaks the guarantee that scripts/vendor-openssl.sh reproduces exactly
+# what is committed.
+third_party/** -text
+third_party/** linguist-vendored

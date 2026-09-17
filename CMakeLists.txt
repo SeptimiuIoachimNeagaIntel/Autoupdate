@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
 # ---------------------------------------------------------------------------
 # Vendored libcurl (third_party/curl), built from source, no network access
 # required at configure/build time. Options below are set before adding the
@@ -19,10 +21,22 @@ if(WIN32)
   # Use the OS-native TLS backend on Windows so no extra TLS library needs
   # to be vendored or installed.
   set(CURL_USE_SCHANNEL ON CACHE BOOL "Use native Windows TLS backend" FORCE)
+elseif(APPLE)
+  # Use the OS-native TLS backend on macOS so no extra TLS library needs
+  # to be vendored or installed.
+  set(CURL_USE_SECTRANSP ON CACHE BOOL "Use native macOS TLS backend" FORCE)
 else()
-  # On Linux/macOS, rely on the system-installed OpenSSL development
-  # package (e.g. libssl-dev / openssl-devel). This is a local lookup via
-  # find_package(), it does not download anything.
+  # Linux builds must be offline and not depend on a system OpenSSL package.
+  # Build the committed OpenSSL source tree locally, then let curl find it.
+  include(BuildBundledOpenSSL)
+  jlp_build_bundled_openssl(
+    SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/openssl"
+    BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/third_party/openssl-build"
+    INSTALL_DIR "${CMAKE_CURRENT_BINARY_DIR}/third_party/openssl"
+  )
+
+  set(OPENSSL_ROOT_DIR "${JLP_BUNDLED_OPENSSL_ROOT}" CACHE PATH "Bundled OpenSSL install root" FORCE)
+  set(OPENSSL_USE_STATIC_LIBS ON CACHE BOOL "Use bundled static OpenSSL libraries" FORCE)
   set(CURL_USE_OPENSSL ON CACHE BOOL "Use OpenSSL TLS backend" FORCE)
 endif()
 
