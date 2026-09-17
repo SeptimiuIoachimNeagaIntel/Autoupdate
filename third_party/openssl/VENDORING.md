@@ -14,15 +14,71 @@ scripts/vendor-openssl.sh 3.5.8
 ## What was removed
 
 These directories are deleted to keep the repository small (the full upstream
-tree is ~140 MB; this one is ~36 MB):
+tree is ~140 MB; this one is ~35 MB):
 
 - `test/`
 - `doc/`
 - `demos/`
 - `fuzz/`
 - `apps/`
+- `VMS/`
+- `external/perl/Text-Template-1.56/t/`
+- `cloudflare-quiche/`
+- `oqs-provider/`
+- `pkcs11-provider/`
+- `python-ecdsa/`
+- `tlsfuzzer/`
+- `tlslite-ng/`
+- `wycheproof/`
+- `.ctags.d/`
 
-None of them are needed for a library-only build of libcrypto/libssl.
+These individual files are deleted as well -- release notes, porting notes,
+contributor docs, the VMS configure wrapper, and the packaging metadata of the
+bundled Text::Template CPAN distribution:
+
+- `ACKNOWLEDGEMENTS.md`
+- `AUTHORS.md`
+- `CHANGES.md`
+- `CODE-OF-CONDUCT.md`
+- `CONTRIBUTING.md`
+- `HACKING.md`
+- `INSTALL.md`
+- `NEWS.md`
+- `NOTES-ANDROID.md`
+- `NOTES-ANSI.md`
+- `NOTES-DJGPP.md`
+- `NOTES-NONSTOP.md`
+- `NOTES-PERL.md`
+- `NOTES-POSIX.md`
+- `NOTES-UNIX.md`
+- `NOTES-VALGRIND.md`
+- `NOTES-VMS.md`
+- `NOTES-WINDOWS.md`
+- `README.md`
+- `README-ENGINES.md`
+- `README-FIPS.md`
+- `README-PROVIDERS.md`
+- `README-QUIC.md`
+- `SUPPORT.md`
+- `config.com`
+- `funding.json`
+- `external/perl/Text-Template-1.56/Changes`
+- `external/perl/Text-Template-1.56/INSTALL`
+- `external/perl/Text-Template-1.56/MANIFEST`
+- `external/perl/Text-Template-1.56/META.json`
+- `external/perl/Text-Template-1.56/META.yml`
+- `external/perl/Text-Template-1.56/Makefile.PL`
+- `external/perl/Text-Template-1.56/README`
+- `external/perl/Text-Template-1.56/SIGNATURE`
+
+None of the above is needed for a library-only build of libcrypto/libssl. The
+check that proves it: configure the pruned tree for `linux-x86_64` and diff
+the generated `Makefile` against one from an unpruned tree. They are
+byte-identical, so no build rule references anything that was removed.
+
+`ms/` is deliberately **kept** even though the Linux build never reads it: it
+holds the applink/uplink shim a Windows OpenSSL build needs, and keeping it
+leaves the door open to building this tree on Windows later.
 
 ## Why the empty build.info stubs
 

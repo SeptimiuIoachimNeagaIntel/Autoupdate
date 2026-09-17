@@ -15,7 +15,18 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 set(BUILD_CURL_EXE OFF CACHE BOOL "Build curl executable" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build libcurl as a static library" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "Build curl tests" FORCE)
+set(CURL_DISABLE_TESTS ON CACHE BOOL "Disable curl tests" FORCE)
 set(CURL_DISABLE_INSTALL ON CACHE BOOL "Disable curl install targets" FORCE)
+
+# The vendored curl tree is pruned down to the library and its CMake build
+# (see third_party/curl/VENDORING.md): docs/, tests/, src/ and the autotools
+# and nmake build systems are gone. These options must be off or curl's
+# CMakeLists.txt descends into directories that no longer exist. Turning the
+# manuals off also drops curl's build-time Perl requirement.
+set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "Build libcurl man pages" FORCE)
+set(BUILD_MISC_DOCS OFF CACHE BOOL "Build misc curl man pages" FORCE)
+set(ENABLE_CURL_MANUAL OFF CACHE BOOL "Build the curl man page" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "Build libcurl examples" FORCE)
 
 if(WIN32)
   # Use the OS-native TLS backend on Windows so no extra TLS library needs

@@ -32,7 +32,50 @@ URL="https://www.openssl.org/source/${TARBALL}"
 # Directories stripped from the upstream tree. The first four are large and
 # unnecessary for a library-only build; 'fuzz' is small but is removed for the
 # same reason (it only builds fuzzing harnesses).
-PRUNE_DIRS=(test doc demos fuzz apps)
+#
+# VMS is the build system for a platform this project does not target, and the
+# seven trailing entries are empty submodule mount points for test-only
+# external suites (git cannot track empty directories anyway).
+#
+# 'ms' is deliberately NOT pruned: it holds the applink/uplink shim that a
+# Windows OpenSSL build needs. The Linux build never reads it, but keeping it
+# leaves the tree usable if this project ever builds OpenSSL on Windows.
+PRUNE_DIRS=(
+  test doc demos fuzz apps
+  VMS
+  external/perl/Text-Template-1.56/t
+  cloudflare-quiche oqs-provider pkcs11-provider python-ecdsa
+  tlsfuzzer tlslite-ng wycheproof
+)
+
+# Individual files stripped from the upstream tree: release notes, porting
+# notes, contributor docs and the VMS configure wrapper. Nothing in the build
+# reads any of them -- Configure only mentions INSTALL.md inside error
+# messages. LICENSE.txt and VERSION.dat are kept.
+#
+# The Text-Template files are that CPAN distribution's packaging metadata;
+# Configure only ever adds its 'lib' directory to @INC.
+PRUNE_FILES=(
+  ACKNOWLEDGEMENTS.md AUTHORS.md CHANGES.md CODE-OF-CONDUCT.md
+  CONTRIBUTING.md HACKING.md INSTALL.md NEWS.md
+  NOTES-ANDROID.md NOTES-ANSI.md NOTES-DJGPP.md NOTES-NONSTOP.md
+  NOTES-PERL.md NOTES-POSIX.md NOTES-UNIX.md NOTES-VALGRIND.md
+  NOTES-VMS.md NOTES-WINDOWS.md
+  README.md README-ENGINES.md README-FIPS.md README-PROVIDERS.md
+  README-QUIC.md SUPPORT.md
+  config.com funding.json
+  external/perl/Text-Template-1.56/Changes
+  external/perl/Text-Template-1.56/INSTALL
+  external/perl/Text-Template-1.56/MANIFEST
+  external/perl/Text-Template-1.56/META.json
+  external/perl/Text-Template-1.56/META.yml
+  external/perl/Text-Template-1.56/Makefile.PL
+  external/perl/Text-Template-1.56/README
+  external/perl/Text-Template-1.56/SIGNATURE
+)
+
+# Dot-directories stripped from the upstream tree (editor/ctags tooling).
+PRUNE_DOTDIRS=(.ctags.d)
 
 # The top-level build.info lists apps, doc and fuzz in SUBDIRS unconditionally,
 # so Configure reads their build.info files even with the matching no-* flags.
@@ -66,9 +109,14 @@ echo "==> Extracting"
 tar xzf "${WORK_DIR}/${TARBALL}" -C "${WORK_DIR}"
 SRC="${WORK_DIR}/openssl-${OPENSSL_VERSION}"
 
-echo "==> Pruning: ${PRUNE_DIRS[*]}"
-for dir in "${PRUNE_DIRS[@]}"; do
+echo "==> Pruning directories: ${PRUNE_DIRS[*]}"
+for dir in "${PRUNE_DIRS[@]}" "${PRUNE_DOTDIRS[@]}"; do
   rm -rf "${SRC}/${dir}"
+done
+
+echo "==> Pruning files: ${#PRUNE_FILES[@]} docs and porting notes"
+for file in "${PRUNE_FILES[@]}"; do
+  rm -f "${SRC}/${file}"
 done
 
 echo "==> Writing empty build.info stubs: ${STUB_DIRS[*]}"
@@ -85,8 +133,10 @@ mv "${SRC}" "${DEST}"
 # Build the markdown bullet lists before the heredoc. Doing it inline via
 # $(printf ...) would require escaping the backticks, and those escapes end up
 # in printf's format string rather than being consumed by the shell.
-PRUNE_LIST="$(printf -- '- `%s/`\n' "${PRUNE_DIRS[@]}")"
+PRUNE_LIST="$(printf -- '- `%s/`\n' "${PRUNE_DIRS[@]}" "${PRUNE_DOTDIRS[@]}")"
+PRUNE_FILE_LIST="$(printf -- '- `%s`\n' "${PRUNE_FILES[@]}")"
 STUB_LIST="$(printf -- '- `%s/build.info` (empty)\n' "${STUB_DIRS[@]}")"
+DEST_SIZE="~$(du -sm "${DEST}" | cut -f1) MB"
 
 cat > "${DEST}/VENDORING.md" <<EOF
 # Vendored OpenSSL (pruned)
@@ -105,11 +155,24 @@ scripts/vendor-openssl.sh ${OPENSSL_VERSION}
 ## What was removed
 
 These directories are deleted to keep the repository small (the full upstream
-tree is ~140 MB; this one is ~36 MB):
+tree is ~140 MB; this one is ${DEST_SIZE}):
 
 ${PRUNE_LIST}
 
-None of them are needed for a library-only build of libcrypto/libssl.
+These individual files are deleted as well -- release notes, porting notes,
+contributor docs, the VMS configure wrapper, and the packaging metadata of the
+bundled Text::Template CPAN distribution:
+
+${PRUNE_FILE_LIST}
+
+None of the above is needed for a library-only build of libcrypto/libssl. The
+check that proves it: configure the pruned tree for \`linux-x86_64\` and diff
+the generated \`Makefile\` against one from an unpruned tree. They are
+byte-identical, so no build rule references anything that was removed.
+
+\`ms/\` is deliberately **kept** even though the Linux build never reads it: it
+holds the applink/uplink shim a Windows OpenSSL build needs, and keeping it
+leaves the door open to building this tree on Windows later.
 
 ## Why the empty build.info stubs
 
